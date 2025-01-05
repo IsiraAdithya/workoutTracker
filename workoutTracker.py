@@ -4,15 +4,12 @@ from datetime import datetime
 
 # Make sure we import QEasingCurve so we can use setEasingCurve(QEasingCurve.InOutQuad)
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve
-
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
     QTabWidget,
     QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
     QLabel,
     QLineEdit,
     QSpinBox,
@@ -24,11 +21,12 @@ from PySide6.QtWidgets import (
     QComboBox,
     QCheckBox,
     QScrollArea,
-    QToolButton,
-    QMenu,
-    QDialog,
+    QPushButton,
     QFormLayout,
-    QDialogButtonBox
+    QDialogButtonBox,
+    QDialog,
+    QToolButton,
+    QMenu
 )
 from PySide6.QtGui import QFontDatabase
 
@@ -36,17 +34,17 @@ from PySide6.QtGui import QFontDatabase
 # 1. DATABASE & UTILS
 ###############################################################################
 
-DB_NAME = "futuristic_tracker_v5.db"
+DB_NAME = "futuristic_tracker_v6.db"
 
 def initialize_db():
     """
-    Creates the tables in a brand-new DB. The weigh_ins table now has
-    (id, date, weight, height, bmi).
+    Creates the necessary tables in a brand-new DB.
+    We'll store weigh_ins with (id, date, weight, height, bmi).
     """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # workouts table
+    # workouts
     c.execute("""
         CREATE TABLE IF NOT EXISTS workouts (
             workout_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +52,7 @@ def initialize_db():
         );
     """)
 
-    # exercises table
+    # exercises
     c.execute("""
         CREATE TABLE IF NOT EXISTS exercises (
             exercise_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,7 +62,7 @@ def initialize_db():
         );
     """)
 
-    # sets table: (exercise_id, set_number) composite PK
+    # sets (exercise_id + set_number)
     c.execute("""
         CREATE TABLE IF NOT EXISTS sets (
             exercise_id INTEGER NOT NULL,
@@ -76,7 +74,7 @@ def initialize_db():
         );
     """)
 
-    # weigh_ins table: added height + bmi columns
+    # weigh_ins: includes height + bmi
     c.execute("""
         CREATE TABLE IF NOT EXISTS weigh_ins (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -175,9 +173,8 @@ QHeaderView::section {
 """
 
 ###############################################################################
-# 3. PLAN DATA (Fixed, no CRUD)
+# 3. PLAN DATA (Hard-coded, no CRUD)
 ###############################################################################
-
 WORKOUT_PLAN = {
     "Day 1: Back & Biceps (Pull 1)": [
         "Neutral Grip Pull-Ups – 4 sets (8-12 reps)",
@@ -235,7 +232,7 @@ WORKOUT_PLAN = {
 }
 
 ###############################################################################
-# 4. PLAN TAB (No CRUD) - Checkboxes
+# 4. PLAN TAB (Checklists + "Add to Workouts")
 ###############################################################################
 
 class AddPlanExercisesDialog(QDialog):
@@ -291,7 +288,6 @@ class PlanTab(QWidget):
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-
         self.ex_container = QWidget()
         self.ex_layout = QVBoxLayout(self.ex_container)
         self.ex_layout.setAlignment(Qt.AlignTop)
@@ -389,68 +385,8 @@ class PlanTab(QWidget):
         conn.close()
 
 ###############################################################################
-# 5. WORKOUT TAB: 3-Dot Menu + Refresh
+# 5. WORKOUT TAB: "Delete" Buttons (Bin icon) + Refresh
 ###############################################################################
-
-class EditSetDialog(QDialog):
-    def __init__(self, exercise_id, set_number, parent=None):
-        super().__init__(parent)
-        self.exercise_id = exercise_id
-        self.set_number = set_number
-        self.setWindowTitle(f"Edit Set (exercise_id={exercise_id}, set_num={set_number})")
-        self.resize(300,200)
-
-        self.date_input = QLineEdit()
-        self.exercise_input = QLineEdit()
-        self.reps_input = QSpinBox()
-        self.reps_input.setRange(1,999)
-        self.weight_input = QDoubleSpinBox()
-        self.weight_input.setRange(0,9999)
-        self.weight_input.setSingleStep(5.0)
-
-        self.load_set_data()
-
-        form = QFormLayout()
-        form.addRow("Date:", self.date_input)
-        form.addRow("Exercise:", self.exercise_input)
-        form.addRow("Reps:", self.reps_input)
-        form.addRow("Weight:", self.weight_input)
-
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-
-        layout = QVBoxLayout()
-        layout.addLayout(form)
-        layout.addWidget(button_box)
-        self.setLayout(layout)
-
-    def load_set_data(self):
-        conn = get_connection()
-        c = conn.cursor()
-        c.execute("""
-            SELECT w.date, e.exercise_name, s.reps, s.weight
-            FROM sets s
-            JOIN exercises e ON s.exercise_id = e.exercise_id
-            JOIN workouts w ON e.workout_id = w.workout_id
-            WHERE s.exercise_id=? AND s.set_number=?
-        """,(self.exercise_id, self.set_number))
-        row = c.fetchone()
-        conn.close()
-
-        if row:
-            date_val, ex_name, reps_val, weight_val = row
-            self.date_input.setText(date_val)
-            self.exercise_input.setText(ex_name)
-            self.reps_input.setValue(reps_val)
-            self.weight_input.setValue(weight_val)
-
-    def get_data(self):
-        d = self.date_input.text().strip()
-        e = self.exercise_input.text().strip()
-        r = self.reps_input.value()
-        w = self.weight_input.value()
-        return d, e, r, w
 
 class WorkoutTab(QWidget):
     def __init__(self, parent=None):
@@ -491,11 +427,11 @@ class WorkoutTab(QWidget):
         btn_refresh.clicked.connect(self.load_sets)
         main_layout.addWidget(btn_refresh)
 
-        # Table
+        # Table: columns => date, exercise, set#, reps, weight, delete
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels([
-            "Date","Exercise","Set #","Reps","Weight","Actions"
+            "Date","Exercise","Set #","Reps","Weight","Delete"
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         main_layout.addWidget(QLabel("Recent Sets (Latest 10)"))
@@ -521,26 +457,18 @@ class WorkoutTab(QWidget):
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
             date_val, ex_name, set_num, reps_val, weight_val, exercise_id = row
+
             self.table.setItem(i, 0, QTableWidgetItem(date_val))
             self.table.setItem(i, 1, QTableWidgetItem(ex_name))
             self.table.setItem(i, 2, QTableWidgetItem(str(set_num)))
             self.table.setItem(i, 3, QTableWidgetItem(str(reps_val)))
             self.table.setItem(i, 4, QTableWidgetItem(str(weight_val)))
 
-            # 3-dot menu
-            tool_btn = QToolButton()
-            tool_btn.setText("⋮")
-            menu = QMenu()
-            action_edit = menu.addAction("Edit")
-            action_delete = menu.addAction("Delete")
-
-            action_edit.triggered.connect(lambda checked, e_id=exercise_id, s_n=set_num: self.edit_set(e_id, s_n))
-            action_delete.triggered.connect(lambda checked, e_id=exercise_id, s_n=set_num: self.delete_set(e_id, s_n))
-
-            tool_btn.setMenu(menu)
-            tool_btn.setPopupMode(QToolButton.InstantPopup)
-
-            self.table.setCellWidget(i, 5, tool_btn)
+            # Bin button to delete
+            bin_button = QPushButton("🗑")  # or an icon if you prefer
+            bin_button.setStyleSheet("QPushButton { font-size: 16px; }")
+            bin_button.clicked.connect(lambda _, e_id=exercise_id, s_n=set_num: self.delete_set(e_id, s_n))
+            self.table.setCellWidget(i, 5, bin_button)
 
     def add_set(self):
         date_str = self.date_input.text().strip() or today_str()
@@ -600,67 +528,6 @@ class WorkoutTab(QWidget):
         self.weight_input.setValue(100.0)
         self.load_sets()
 
-    def edit_set(self, exercise_id, set_number):
-        dialog = EditSetDialog(exercise_id, set_number, self)
-        if dialog.exec() == QDialog.Accepted:
-            new_date, new_ex, new_reps, new_weight = dialog.get_data()
-            if not new_ex:
-                QMessageBox.warning(self,"Error","Exercise name cannot be empty.")
-                return
-            self.update_set(exercise_id, set_number, new_date, new_ex, new_reps, new_weight)
-            self.load_sets()
-
-    def update_set(self, old_e_id, old_sn, new_date, new_exercise, new_reps, new_weight):
-        conn = get_connection()
-        c = conn.cursor()
-
-        # new workout
-        c.execute("SELECT workout_id FROM workouts WHERE date=?",(new_date,))
-        w_row = c.fetchone()
-        if w_row:
-            w_id = w_row[0]
-        else:
-            c.execute("INSERT INTO workouts (date) VALUES (?)",(new_date,))
-            w_id = c.lastrowid
-
-        # new exercise
-        c.execute("""
-            SELECT exercise_id FROM exercises
-            WHERE workout_id=? AND exercise_name=?
-        """,(w_id,new_exercise))
-        ex_row = c.fetchone()
-        if ex_row:
-            new_e_id = ex_row[0]
-        else:
-            c.execute("""
-                INSERT INTO exercises (workout_id, exercise_name)
-                VALUES (?,?)
-            """,(w_id,new_exercise))
-            new_e_id = c.lastrowid
-
-        # find next set_number
-        c.execute("""
-            SELECT COALESCE(MAX(set_number),0)
-            FROM sets
-            WHERE exercise_id=?
-        """,(new_e_id,))
-        max_sn = c.fetchone()[0]
-        new_sn = max_sn+1
-
-        # remove old
-        c.execute("""
-            DELETE FROM sets
-            WHERE exercise_id=? AND set_number=?
-        """,(old_e_id, old_sn))
-
-        # insert new
-        c.execute("""
-            INSERT INTO sets (exercise_id, set_number, reps, weight)
-            VALUES (?,?,?,?)
-        """,(new_e_id, new_sn, new_reps, new_weight))
-        conn.commit()
-        conn.close()
-
     def delete_set(self, e_id, s_n):
         ret = QMessageBox.question(
             self,"Confirm Delete",
@@ -680,88 +547,8 @@ class WorkoutTab(QWidget):
             self.load_sets()
 
 ###############################################################################
-# 6. WEIGH-IN TAB with BMI + 3-Dot menu (Edit/Delete)
+# 6. WEIGH-IN TAB: now with a bin button for each row
 ###############################################################################
-
-class EditWeighInDialog(QDialog):
-    """
-    For editing an existing weigh-in row (id).
-    We'll allow changing date, weight, height => recalc BMI
-    """
-    def __init__(self, weighin_id, parent=None):
-        super().__init__(parent)
-        self.weighin_id = weighin_id
-        self.setWindowTitle(f"Edit Weigh-In #{weighin_id}")
-        self.resize(300,200)
-
-        self.date_input = QLineEdit()
-        self.weight_input = QDoubleSpinBox()
-        self.weight_input.setRange(0,1000)
-        self.weight_input.setSingleStep(0.5)
-        self.height_input = QDoubleSpinBox()
-        self.height_input.setRange(100,250)   # cm
-        self.bmi_label = QLabel("BMI will recalc automatically")
-
-        self.load_weighin_data()
-
-        # We'll recalc BMI if user changes weight or height
-        self.weight_input.valueChanged.connect(self.on_value_changed)
-        self.height_input.valueChanged.connect(self.on_value_changed)
-
-        form = QFormLayout()
-        form.addRow("Date:", self.date_input)
-        form.addRow("Weight (kg):", self.weight_input)
-        form.addRow("Height (cm):", self.height_input)
-        form.addRow("BMI:", self.bmi_label)
-
-        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btn_box.accepted.connect(self.accept)
-        btn_box.rejected.connect(self.reject)
-
-        layout = QVBoxLayout()
-        layout.addLayout(form)
-        layout.addWidget(btn_box)
-        self.setLayout(layout)
-
-    def load_weighin_data(self):
-        conn = get_connection()
-        c = conn.cursor()
-        c.execute("""
-            SELECT date, weight, height, bmi
-            FROM weigh_ins
-            WHERE id=?
-        """,(self.weighin_id,))
-        row = c.fetchone()
-        conn.close()
-
-        if row:
-            date_val, w_val, h_val, b_val = row
-            self.date_input.setText(date_val)
-            self.weight_input.setValue(w_val)
-            self.height_input.setValue(h_val)
-            self.bmi_label.setText(str(b_val))
-
-    def on_value_changed(self):
-        # Recalc BMI
-        w_kg = self.weight_input.value()
-        h_cm = self.height_input.value()
-        if h_cm > 0:
-            h_m = h_cm/100.0
-            bmi = round(w_kg/(h_m**2),2)
-            self.bmi_label.setText(str(bmi))
-        else:
-            self.bmi_label.setText("Invalid height")
-
-    def get_data(self):
-        d_str = self.date_input.text().strip()
-        w_kg = self.weight_input.value()
-        h_cm = self.height_input.value()
-        if h_cm>0:
-            h_m = h_cm/100
-            new_bmi = round(w_kg/(h_m**2),2)
-        else:
-            new_bmi = 0
-        return d_str, w_kg, h_cm, new_bmi
 
 class WeighInTab(QWidget):
     def __init__(self, parent=None):
@@ -792,15 +579,14 @@ class WeighInTab(QWidget):
         main_layout.addWidget(self.height_input)
         main_layout.addWidget(btn_log)
 
-        # Table: columns => date, weight, height, bmi, actions
+        # Table: date, weight, height, bmi, delete
         self.table = QTableWidget()
         self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Date","Weight","Height","BMI","Actions"])
+        self.table.setHorizontalHeaderLabels(["Date","Weight","Height","BMI","Delete"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
         main_layout.addWidget(QLabel("Weigh-In History (Latest 10)"))
         main_layout.addWidget(self.table)
-
         self.setLayout(main_layout)
         self.load_weigh_ins()
 
@@ -818,26 +604,17 @@ class WeighInTab(QWidget):
 
         self.table.setRowCount(len(rows))
         for i, row in enumerate(rows):
-            wid, date_val, w_val, h_val, b_val = row
+            w_id, date_val, w_kg, h_val, b_val = row
             self.table.setItem(i, 0, QTableWidgetItem(date_val))
-            self.table.setItem(i, 1, QTableWidgetItem(str(w_val)))
+            self.table.setItem(i, 1, QTableWidgetItem(str(w_kg)))
             self.table.setItem(i, 2, QTableWidgetItem(str(h_val)))
             self.table.setItem(i, 3, QTableWidgetItem(str(b_val)))
 
-            # 3-dot menu
-            tool_btn = QToolButton()
-            tool_btn.setText("⋮")
-            menu = QMenu()
-            action_edit = menu.addAction("Edit")
-            action_delete = menu.addAction("Delete")
-
-            action_edit.triggered.connect(lambda ch, w_id=wid: self.edit_weigh_in(w_id))
-            action_delete.triggered.connect(lambda ch, w_id=wid: self.delete_weigh_in(w_id))
-
-            tool_btn.setMenu(menu)
-            tool_btn.setPopupMode(QToolButton.InstantPopup)
-
-            self.table.setCellWidget(i, 4, tool_btn)
+            # Bin button to delete
+            bin_button = QPushButton("🗑")
+            bin_button.setStyleSheet("QPushButton { font-size: 16px; }")
+            bin_button.clicked.connect(lambda _, w_id_=w_id: self.delete_weigh_in(w_id_))
+            self.table.setCellWidget(i, 4, bin_button)
 
     def log_weight_and_bmi(self):
         date_str = self.date_input.text().strip() or today_str()
@@ -847,48 +624,31 @@ class WeighInTab(QWidget):
             h_m = h_cm/100.0
             bmi = round(w_kg/(h_m**2),2)
         else:
-            bmi = 0
+            bmi=0
 
         conn = get_connection()
         c = conn.cursor()
         c.execute("""
             INSERT INTO weigh_ins (date, weight, height, bmi)
             VALUES (?,?,?,?)
-        """,(date_str, w_kg, h_cm, bmi))
+        """,(date_str,w_kg,h_cm,bmi))
         conn.commit()
         conn.close()
 
         self.date_input.clear()
         self.load_weigh_ins()
 
-    def edit_weigh_in(self, weighin_id):
-        dialog = EditWeighInDialog(weighin_id, self)
-        if dialog.exec() == QDialog.Accepted:
-            d_str, w_kg, h_cm, new_bmi = dialog.get_data()
-            self.update_weigh_in(weighin_id, d_str, w_kg, h_cm, new_bmi)
-            self.load_weigh_ins()
-
-    def update_weigh_in(self, weighin_id, date_str, w_kg, h_cm, new_bmi):
-        conn = get_connection()
-        c = conn.cursor()
-        c.execute("""
-            UPDATE weigh_ins
-            SET date=?, weight=?, height=?, bmi=?
-            WHERE id=?
-        """,(date_str, w_kg, h_cm, new_bmi, weighin_id))
-        conn.commit()
-        conn.close()
-
-    def delete_weigh_in(self, weighin_id):
+    def delete_weigh_in(self, w_id):
         ret = QMessageBox.question(
-            self, "Confirm Delete",
-            f"Delete weigh-in #{weighin_id}?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            self,"Confirm Delete",
+            f"Delete weigh-in #{w_id}?",
+            QMessageBox.Yes|QMessageBox.No,
+            QMessageBox.No
         )
         if ret == QMessageBox.Yes:
             conn = get_connection()
             c = conn.cursor()
-            c.execute("DELETE FROM weigh_ins WHERE id=?",(weighin_id,))
+            c.execute("DELETE FROM weigh_ins WHERE id=?",(w_id,))
             conn.commit()
             conn.close()
             self.load_weigh_ins()
@@ -995,7 +755,7 @@ class NutritionTab(QWidget):
 class FuturisticFitnessTracker(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Futuristic Fitness Tracker (v5)")
+        self.setWindowTitle("Futuristic Fitness Tracker (v6)")
         self.setGeometry(100, 100, 1000, 700)
         self.setStyleSheet(FUTURISTIC_QSS)
 
@@ -1029,7 +789,7 @@ class FuturisticFitnessTracker(QMainWindow):
 ###############################################################################
 
 def main():
-    # We'll create a brand-new DB with the weigh_ins table that has (id, date, weight, height, bmi)
+    # Create a brand-new DB with the weigh_ins table that has (id, date, weight, height, bmi)
     initialize_db()
 
     app = QApplication(sys.argv)
